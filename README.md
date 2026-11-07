@@ -8,6 +8,9 @@ Docker Compose (or Podman Compose).
 Everything here is for **development and testing only**. The CA and log keys are
 checked-in dev keys, passwords are in `.env`, and services speak plain HTTP.
 
+New to image signing? Start with [HOWTO.md](HOWTO.md). Coding agents should
+read [AGENTS.md](AGENTS.md) first.
+
 ## Components
 
 | Service | Purpose | Host address |
@@ -223,4 +226,6 @@ scripts/verify-blob.sh       Verify a blob bundle
 scripts/seed-registry.sh     Build/push a demo image, print its digest
 scripts/sign-image.sh        Sign an image digest
 scripts/verify-image.sh      Verify an image signature
+AGENTS.md                    Guidance for coding agents
+HOWTO.md                     Step-by-step image signing walkthrough
 ```
