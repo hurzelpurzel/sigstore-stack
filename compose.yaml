@@ -1,0 +1,205 @@
+# A complete local Sigstore stack for keyless signing of blobs and container
+# images. Everything here is for development and testing only: the CA and log
+# keys are generated dev keys, and Keycloak runs in dev mode over plain HTTP.
+
+services:
+  mysql:
+    image: gcr.io/trillian-opensource-ci/db_server:v1.8.0
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root-dev-password}
+      MYSQL_DATABASE: ${DB_NAME:-sigstore}
+      MYSQL_USER: ${DB_USER:-sigstore}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-sigstore-dev-password}
+    volumes:
+      - mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin -h 127.0.0.1 --user=$$MYSQL_USER --password=$$MYSQL_PASSWORD --silent ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  trillian-log-server:
+    image: ghcr.io/sigstore/scaffolding/trillian_log_server:v1.8.0
+    restart: unless-stopped
+    command:
+      - --storage_system=mysql
+      - --mysql_uri=${DB_USER:-sigstore}:${DB_PASSWORD:-sigstore-dev-password}@tcp(mysql:3306)/${DB_NAME:-sigstore}?parseTime=true&interpolateParams=true
+      - --quota_system=noop
+      - --rpc_endpoint=0.0.0.0:8090
+      - --http_endpoint=0.0.0.0:8091
+      - --alsologtostderr
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  trillian-log-signer:
+    image: ghcr.io/sigstore/scaffolding/trillian_log_signer:v1.8.0
+    restart: unless-stopped
+    command:
+      - --storage_system=mysql
+      - --mysql_uri=${DB_USER:-sigstore}:${DB_PASSWORD:-sigstore-dev-password}@tcp(mysql:3306)/${DB_NAME:-sigstore}?parseTime=true&interpolateParams=true
+      - --quota_system=noop
+      - --rpc_endpoint=0.0.0.0:8090
+      - --http_endpoint=0.0.0.0:8091
+      - --force_master
+      - --alsologtostderr
+    depends_on:
+      mysql:
+        condition: service_healthy
+      trillian-log-server:
+        condition: service_started
+
+  rekor-server:
+    build:
+      context: ./rekor
+    image: sigstore-stack-rekor-server:dev
+    restart: unless-stopped
+    environment:
+      DB_HOST: mysql
+      DB_PORT: "3306"
+      DB_NAME: ${DB_NAME:-sigstore}
+      DB_USER: ${DB_USER:-sigstore}
+      DB_PASSWORD: ${DB_PASSWORD:-sigstore-dev-password}
+      TRILLIAN_HOST: trillian-log-server
+      TRILLIAN_PORT: "8090"
+      REKOR_SIGNER_PASSWORD: ${REKOR_SIGNER_PASSWORD:-rekor-dev-password}
+    command:
+      - --trillian_log_server.address=trillian-log-server
+      - --trillian_log_server.port=8090
+      - --rekor_server.address=0.0.0.0
+      - --rekor_server.hostname=localhost
+      - --rekor_server.signer=/pki/rekor.key.pem
+      - --rekor_server.signer-passwd=${REKOR_SIGNER_PASSWORD:-rekor-dev-password}
+      - --search_index.storage_provider=mysql
+      - --search_index.mysql.dsn=${DB_USER:-sigstore}:${DB_PASSWORD:-sigstore-dev-password}@tcp(mysql:3306)/${DB_NAME:-sigstore}?parseTime=true&interpolateParams=true
+      - --enable_attestation_storage
+      - --attestation_storage_bucket=file:///var/run/attestations
+      - --port=3000
+    volumes:
+      - ./config/pki/rekor.key.pem:/pki/rekor.key.pem:ro
+      - attestations:/var/run/attestations
+    ports:
+      - "3000:3000"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      trillian-log-server:
+        condition: service_started
+      trillian-log-signer:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:3000/ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+
+  ctlog:
+    image: ghcr.io/transparency-dev/tesseract/posix:v0.2.0
+    restart: unless-stopped
+    command:
+      - --private_key=/etc/ctfe/ctlog.key.pem
+      - --origin=ctlog
+      - --storage_dir=/ctfe
+      - --roots_pem_file=/etc/fulcio/fulcio.crt.pem
+      - --ext_key_usages=CodeSigning
+      - --http_endpoint=0.0.0.0:6962
+    volumes:
+      - ctlog-data:/ctfe
+      - ./config/pki/ctlog.key.pem:/etc/ctfe/ctlog.key.pem:ro
+      - ./config/pki/fulcio.crt.pem:/etc/fulcio/fulcio.crt.pem:ro
+    ports:
+      - "6962:6962"
+
+  fulcio:
+    image: ghcr.io/sigstore/fulcio:v1.9.1
+    restart: unless-stopped
+    command:
+      - serve
+      - --host=0.0.0.0
+      - --port=5555
+      - --ca=fileca
+      - --fileca-cert=/pki/fulcio.crt.pem
+      - --fileca-key=/pki/fulcio.key.pem
+      - --fileca-key-passwd=${FULCIO_CA_PASSWORD:-fulcio-dev-password}
+      - --ct-log-url=http://ctlog:6962
+      - --config-path=/etc/fulcio-config/config.yaml
+    volumes:
+      - ./config/pki/fulcio.crt.pem:/pki/fulcio.crt.pem:ro
+      - ./config/pki/fulcio.key.pem:/pki/fulcio.key.pem:ro
+      - ./config/fulcio/config.yaml:/etc/fulcio-config/config.yaml:ro
+    ports:
+      - "5555:5555"
+    depends_on:
+      keycloak:
+        condition: service_healthy
+      ctlog:
+        condition: service_started
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.8.2
+    restart: unless-stopped
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      KC_HOSTNAME: ${KEYCLOAK_URL:-http://keycloak.localhost:8080}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+      KC_HTTP_PORT: "8080"
+      KC_HEALTH_ENABLED: "true"
+    volumes:
+      - keycloak-data:/opt/keycloak/data
+      - ./config/keycloak/realm-sigstore.json:/opt/keycloak/data/import/realm-sigstore.json:ro
+    ports:
+      - "8080:8080"
+    networks:
+      default:
+        aliases:
+          # Lets both the browser on the host and containers in the compose
+          # network use the same issuer URL.
+          - keycloak.localhost
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/127.0.0.1/9000 && printf 'GET /health/ready HTTP/1.0\\r\\nHost: localhost\\r\\n\\r\\n' >&3 && grep -q '200 OK' <&3"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+
+  rekor-ui:
+    build:
+      context: ./rekor-ui
+      args:
+        REKOR_UI_DEFAULT_DOMAIN: ${REKOR_URL:-http://localhost:3000}
+    image: sigstore-stack-rekor-ui:dev
+    restart: unless-stopped
+    ports:
+      - "8081:80"
+    depends_on:
+      rekor-server:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  registry:
+    image: docker.io/library/registry:2.8.3
+    restart: unless-stopped
+    environment:
+      REGISTRY_STORAGE_DELETE_ENABLED: "true"
+    volumes:
+      - registry-data:/var/lib/registry
+    ports:
+      - "5001:5000"
+
+volumes:
+  mysql-data:
+  ctlog-data:
+  keycloak-data:
+  attestations:
+  registry-data:

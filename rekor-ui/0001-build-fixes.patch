@@ -1,0 +1,33 @@
+From: Sigstore Stack <dev@example.com>
+Subject: [PATCH] Fix static export build
+
+- @peculiar/x509 1.14.3 removed toJSON() from SubjectAlternativeNameExtension;
+  the JSON representation now lives on its GeneralNames value.
+- Next.js static export requires images.unoptimized when next/image is used.
+  The GitHub Pages workflow normally injects this via configure-pages.
+
+diff --git a/src/modules/x509/extensions.ts b/src/modules/x509/extensions.ts
+index 1111111..2222222 100644
+--- a/src/modules/x509/extensions.ts
++++ b/src/modules/x509/extensions.ts
+@@ -63,7 +63,7 @@ export const EXTENSION_NAMES: Record<string, ExtensionName> = {
+ 	"2.5.29.17": {
+ 		name: "Subject Alternative Name",
+ 		toJSON(rawExtension: Extension) {
+-			return new SubjectAlternativeNameExtension(rawExtension.rawData).toJSON();
++			return new SubjectAlternativeNameExtension(rawExtension.rawData).names.toJSON();
+ 		},
+ 	},
+ 	"2.5.29.19": {
+diff --git a/next.config.js b/next.config.js
+index 3333333..4444444 100644
+--- a/next.config.js
++++ b/next.config.js
+@@ -2,6 +2,7 @@
+ const nextConfig = {
+ 	reactStrictMode: true,
+ 	output: "export",
++	images: { unoptimized: true },
+ };
+ 
+ module.exports = nextConfig;

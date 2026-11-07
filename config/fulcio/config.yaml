@@ -1,0 +1,13 @@
+# Fulcio trusts exactly one OIDC issuer: the local Keycloak realm.
+#
+# The key must match the "iss" claim of the token that cosign obtains from
+# Keycloak. Keycloak is configured with KC_HOSTNAME so that this URL is stable
+# both inside the compose network and from the host:
+#   - from the host, *.localhost resolves to 127.0.0.1
+#   - inside compose, Keycloak has the network alias "keycloak.localhost"
+oidc-issuers:
+  "http://keycloak.localhost:8080/realms/sigstore":
+    issuer-url: "http://keycloak.localhost:8080/realms/sigstore"
+    client-id: sigstore
+    type: email
+    description: "Local Keycloak realm for Sigstore keyless signing"
