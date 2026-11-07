@@ -3,9 +3,14 @@
 # Generate the development PKI and the cosign trust material for the local
 # Sigstore stack. This is intentionally a development/test CA: the private
 # keys live next to the certificates and are not protected beyond the
-# passwords in .env.
+# passwords in .env. Generated material is gitignored and must never be
+# committed.
 #
-# Usage: ./scripts/gen-pki.sh
+# Usage: ./scripts/gen-pki.sh [--if-missing]
+#
+#   --if-missing  Only generate when required files are absent. Used by
+#                 `make up` so a fresh checkout bootstraps itself without
+#                 rotating keys on every start.
 set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -27,9 +32,49 @@ REKOR_URL="${REKOR_URL:-http://localhost:3000}"
 CTLOG_URL="${CTLOG_URL:-http://localhost:6962}"
 KEYCLOAK_ISSUER="${KEYCLOAK_ISSUER:-http://keycloak.localhost:8080/realms/sigstore}"
 
+IF_MISSING=false
+case "${1:-}" in
+  "")
+    ;;
+  --if-missing)
+    IF_MISSING=true
+    ;;
+  -h | --help)
+    sed -n '3,15p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+    exit 0
+    ;;
+  *)
+    printf "Error: unknown argument '%s' (usage: %s [--if-missing])\n" "$1" "${BASH_SOURCE[0]}" >&2
+    exit 1
+    ;;
+esac
+
 for bin in openssl; do
   command -v "${bin}" >/dev/null || { echo "missing required command: ${bin}" >&2; exit 1; }
 done
+
+REQUIRED_FILES=(
+  "${PKI_DIR}/fulcio.crt.pem"
+  "${PKI_DIR}/fulcio.key.pem"
+  "${PKI_DIR}/rekor.key.pem"
+  "${PKI_DIR}/rekor.pub.pem"
+  "${PKI_DIR}/ctlog.key.pem"
+  "${PKI_DIR}/ctlog.pub.pem"
+  "${COSIGN_DIR}/trusted-root.json"
+  "${COSIGN_DIR}/signing-config.json"
+)
+
+if [[ "${IF_MISSING}" == true ]]; then
+  missing=()
+  for file in "${REQUIRED_FILES[@]}"; do
+    [[ -f "${file}" ]] || missing+=("${file#"${ROOT_DIR}/"}")
+  done
+  if [[ ${#missing[@]} -eq 0 ]]; then
+    echo "==> PKI and cosign trust material already present; nothing to do"
+    exit 0
+  fi
+  printf '==> Missing generated material: %s\n' "${missing[*]}"
+fi
 
 mkdir -p "${PKI_DIR}" "${COSIGN_DIR}"
 umask 027
@@ -66,7 +111,12 @@ openssl ec -in "${PKI_DIR}/ctlog.key.pem" -pubout -out "${PKI_DIR}/ctlog.pub.pem
 # DEV ONLY: these are not secrets in any meaningful sense.
 printf '%s\n' "${FULCIO_PASS}" > "${PKI_DIR}/fulcio.password"
 printf '%s\n' "${REKOR_PASS}" > "${PKI_DIR}/rekor.password"
-chmod 644 "${PKI_DIR}"/*.pem "${PKI_DIR}"/*.password
+
+# The containers run as non-root users that do not share the host owner's UID,
+# so key files must stay readable by everyone inside this dev stack. Passwords
+# are not mounted into containers and remain owner-only.
+chmod 644 "${PKI_DIR}"/*.pem
+chmod 600 "${PKI_DIR}"/*.password
 
 echo "==> cosign trust material"
 if command -v cosign >/dev/null 2>&1; then
@@ -87,6 +137,21 @@ if command -v cosign >/dev/null 2>&1; then
 else
   echo "WARNING: cosign not found; skipping trusted-root.json and signing-config.json." >&2
   echo "         Install cosign >= 3.0 and rerun this script." >&2
+fi
+
+# In --if-missing mode the caller (make up) is about to start the stack. Never
+# report success with incomplete material: the next start would rotate the keys
+# out from under containers that are already running.
+if [[ "${IF_MISSING}" == true ]]; then
+  missing=()
+  for file in "${REQUIRED_FILES[@]}"; do
+    [[ -f "${file}" ]] || missing+=("${file#"${ROOT_DIR}/"}")
+  done
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    printf 'Error: PKI generation is incomplete, missing: %s\n' "${missing[*]}" >&2
+    echo "       Install cosign >= 3.0 and rerun 'make ensure-pki'." >&2
+    exit 1
+  fi
 fi
 
 echo

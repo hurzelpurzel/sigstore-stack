@@ -73,6 +73,7 @@ function main() {
 
   load_env
   require_tools "${DEPENDENCIES[@]}"
+  require_trust_material
 
   if [[ -z "${token}" ]]; then
     if ! token=$("${SCRIPT_DIR}/token.sh"); then

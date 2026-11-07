@@ -99,6 +99,10 @@ services:
   ctlog:
     image: ghcr.io/transparency-dev/tesseract/posix:v0.2.0
     restart: unless-stopped
+    # The posix image runs as UID 65532, but a freshly created named volume is
+    # root-owned. Run as root inside this dev container so /ctfe stays writable
+    # under both rootless Podman and Docker.
+    user: "0"
     command:
       - --private_key=/etc/ctfe/ctlog.key.pem
       - --origin=ctlog

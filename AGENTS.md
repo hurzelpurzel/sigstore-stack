@@ -10,8 +10,8 @@ OIDC issuer, the Rekor search UI, a local OCI registry, and MySQL/Trillian via
 Docker Compose or Podman Compose.
 
 **Never treat any key, password, or endpoint here as production material.** The
-CA/log keys are committed, passwords live in `.env`, and all services use plain
-HTTP. Keycloak runs with `start-dev`.
+CA/log keys are generated locally into `config/pki/` and gitignored, passwords
+live in `.env`, and all services use plain HTTP. Keycloak runs with `start-dev`.
 
 ## Golden rules
 
@@ -44,6 +44,7 @@ HTTP. Keycloak runs with `start-dev`.
 | `make reset` | Stop, delete volumes, start clean |
 | `make ps` / `make logs` | Status / follow logs |
 | `make pki` | Regenerate dev PKI and cosign trust files |
+| `make ensure-pki` | Generate PKI only when it is missing (`make up` does this) |
 | `make token` | Print a Keycloak access token |
 | `make demo` | End-to-end blob and image sign/verify smoke test |
 | `make seed-registry` | Build/push demo image, print `IMAGE=repo@sha256:...` |
@@ -86,7 +87,8 @@ reads the highest `TreeId` from Trillian's `Trees` table, then appends
 this behavior; without it, every container restart can create a new Trillian
 tree and the Rekor log appears empty.
 
-**Trust material.** `scripts/gen-pki.sh` generates:
+**Trust material.** `scripts/gen-pki.sh` generates (all gitignored, never
+commit generated keys or cosign trust files):
 
 - Fulcio root CA (`config/pki/fulcio.{crt,key}.pem`)
 - Rekor ECDSA P-256 log key (`config/pki/rekor.{key,pub}.pem`)
@@ -118,6 +120,7 @@ UI from an unpinned branch.
 | `rekor/` | Wrapper image that discovers the persisted Trillian tree ID |
 | `rekor-ui/` | Pinned UI build and nginx static serving |
 | `scripts/gen-pki.sh` | Single source of truth for dev PKI and cosign config |
+| `.gitignore` | Keeps generated PKI/trust files and private keys out of git |
 | `scripts/lib.sh` | Shared `.env` loading and dependency checks |
 
 ## Common pitfalls
@@ -135,7 +138,10 @@ UI from an unpinned branch.
   the Alpine client can authenticate with MySQL's
   `caching_sha2_password`.
 - **`make pki` invalidates existing bundles.** It regenerates every key and the
-  Fulcio root, so reset volumes and re-sign artifacts afterwards.
+  Fulcio root, so reset volumes and re-sign artifacts afterwards. `make up`
+  only generates missing material and never rotates existing keys.
+- **Never commit generated key material.** `config/pki/` and the generated
+  cosign trust files are gitignored; keep them that way.
 - **No TSA.** Do not add timestamp-authority requirements to verification
   policies unless you also add and configure a TSA.
 

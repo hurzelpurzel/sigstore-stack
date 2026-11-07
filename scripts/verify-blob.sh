@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
-# Verify a blob signature bundle produced by this stack. Uses the committed
-# development trust root, so no network access to TUF is required.
+# Verify a blob signature bundle produced by this stack. Uses the locally
+# generated development trust root, so no network access to TUF is required.
 
 set -o pipefail
 
@@ -76,6 +76,7 @@ function main() {
 
   load_env
   require_tools "${DEPENDENCIES[@]}"
+  require_trust_material
 
   [[ -f "${file}" ]] || die "file not found: ${file}"
   bundle="${bundle:-${file}.sigstore.json}"

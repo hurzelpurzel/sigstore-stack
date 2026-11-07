@@ -70,6 +70,7 @@ function main() {
 
   load_env
   require_tools "${DEPENDENCIES[@]}"
+  require_trust_material
 
   [[ -f "${file}" ]] || die "file not found: ${file}"
   bundle="${bundle:-${file}.sigstore.json}"

@@ -68,6 +68,7 @@ function main() {
 
   load_env
   require_tools "${DEPENDENCIES[@]}"
+  require_trust_material
 
   cosign verify \
     --allow-http-registry \

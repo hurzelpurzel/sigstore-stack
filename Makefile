@@ -5,7 +5,7 @@ COMPOSE ?= $(shell if command -v podman-compose >/dev/null 2>&1; then echo podma
 FILE ?=
 IMAGE ?=
 
-.PHONY: help up down reset logs ps pki token demo sign-blob verify-blob seed-registry sign-image verify-image
+.PHONY: help up down reset logs ps pki ensure-pki token demo sign-blob verify-blob seed-registry sign-image verify-image
 
 help:
 	@echo "Local Sigstore stack"
@@ -16,6 +16,7 @@ help:
 	@echo "  make logs               Follow all service logs"
 	@echo "  make ps                 Show service status"
 	@echo "  make pki                Regenerate dev PKI and cosign trust material"
+	@echo "  make ensure-pki         Generate PKI only if it is missing"
 	@echo "  make token              Print a Keycloak access token"
 	@echo "  make demo               Sign/verify a blob and an image end to end"
 	@echo
@@ -25,13 +26,18 @@ help:
 	@echo "  make sign-image IMAGE=repo@sha256:..."
 	@echo "  make verify-image IMAGE=repo@sha256:..."
 
-up:
+# Generate keys on a fresh checkout, but never rotate them on a normal start:
+# existing Rekor entries and bundles are tied to the current log key.
+ensure-pki:
+	@./scripts/gen-pki.sh --if-missing
+
+up: ensure-pki
 	$(COMPOSE) up -d
 
 down:
 	$(COMPOSE) down
 
-reset:
+reset: ensure-pki
 	$(COMPOSE) down -v
 	$(COMPOSE) up -d
 
